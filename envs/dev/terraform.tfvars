@@ -1,0 +1,12 @@
+aws_region           = "us-east-1"
+environment          = "dev"
+app_instance_type    = "t3.micro"
+asg_min_size         = 1
+asg_max_size         = 3
+asg_desired_capacity = 2
+db_instance_class    = "db.t3.micro"
+db_allocated_storage = 20
+db_name              = "devdb"
+db_username          = "devadmin"
+db_password          = "DevSecurePassword123!"
+db_multi_az          = false
