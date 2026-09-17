@@ -8,4 +8,6 @@ db_instance_class    = "db.t3.small"
 db_allocated_storage = 50
 db_name              = "proddb"
 db_username          = "prodadmin"
+# Pass db_password via environment variable (TF_VAR_db_password) or local unversioned terraform.tfvars
+# db_password        = "YOUR_SECURE_PASSWORD"
 db_multi_az          = true

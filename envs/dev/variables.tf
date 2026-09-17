@@ -74,9 +74,9 @@ variable "db_username" {
 }
 
 variable "db_password" {
-  type      = string
-  sensitive = true
-  default   = "DevSecurePassword123!"
+  description = "Master database password"
+  type        = string
+  sensitive   = true
 }
 
 variable "db_multi_az" {
