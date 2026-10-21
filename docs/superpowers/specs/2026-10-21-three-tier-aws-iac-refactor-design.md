@@ -1,23 +1,32 @@
 # Three-Tier AWS Infrastructure as Code with Terraform - Design Specification
 
 **Date:** 2026-10-21  
-**Status:** Approved  
+**Status:** Approved by User  
 **Author:** DevOps Engineering Team  
 
 ---
 
-## 1. Project Overview & Objectives
+## 1. Project Overview & Architecture Alignment
 
-This specification defines the architectural overhaul and standardization of the **Three-Tier AWS Infrastructure as Code with Terraform** project. The target implementation transforms the current workspace into an enterprise-ready, cost-conscious, and secure cloud platform.
+This specification aligns the **Three-Tier AWS Infrastructure as Code with Terraform** project directly with the user-provided architectural blueprint (`3-TIER ARCHITECTURE ON AWS (UAT ENV)`), incorporating production-grade elasticity, zero-trust security, and automated state management.
 
-### Core Objectives:
-1. **Elastic Compute Layer:** Replace static `aws_instance` resources with an `aws_launch_template` and `aws_autoscaling_group` connected to an Application Load Balancer.
-2. **Dynamic AMI Lookup:** Eliminate region-locked hardcoded AMIs using `data "aws_ami" "amazon_linux_2023"`.
-3. **Database Modernization & Cost Optimization:** Transition to **PostgreSQL 15.7** on Amazon RDS, with configurable `multi_az` (`false` in Dev/UAT for Free Tier compatibility, `true` in Prod for high availability).
-4. **Zero-Trust Network & Port Hardening:** Remove public SSH (Port 22) exposure. Enforce AWS Systems Manager (SSM) Session Manager for secure instance administration.
-5. **State Management & Concurrency Control:** Implement remote state storage via an S3 backend with AES-256 encryption, bucket versioning, public access blocks, and DynamoDB distributed state locking (`global/s3_backend`).
-6. **Multi-Environment Isolation:** Implement a directory-per-environment model (`envs/dev`, `envs/uat`, `envs/prod`) with independent state files, dedicated variable definitions, and `.tfvars.example` templates.
-7. **Code Quality & Bug Remediation:** Fix the invalid `aws ~> 6.0` provider declaration to `aws ~> 5.0`, remove committed credentials, establish `.gitignore`, and configure `.tflint.hcl`.
+### Key Architectural Decisions:
+1. **True 3-Tier Compute Separation with Elastic ASGs:**
+   - **Tier 1 (Presentation / Web):** Application Load Balancer in Public Subnets forwarding traffic (Port 80) to a **Frontend Auto Scaling Group** across 2 Availability Zones.
+   - **Tier 2 (Application / Logic):** **Backend Auto Scaling Group** deployed across Private App Subnets, accessible on Port 8080 **strictly from the Frontend Security Group**.
+   - **Tier 3 (Database / Data):** **Amazon RDS PostgreSQL 15.7** deployed in dedicated DB Subnets, accessible on Port 5432 **strictly from the Backend Security Group**.
+2. **Subnet Topology & IP Addressing (Aligned with Architectural Blueprint):**
+   - **Public Subnet 1 (`us-east-1a`):** `10.0.1.0/24` (ALB Node A, Frontend Web ASG)
+   - **Public Subnet 2 (`us-east-1b`):** `10.0.16.0/24` (ALB Node B, Frontend Web ASG, NAT Gateway & EIP)
+   - **Private App Subnet 1 (`us-east-1a`):** `10.0.24.0/24` (Backend App ASG)
+   - **Private App Subnet 2 (`us-east-1b`):** `10.0.48.0/24` (Backend App ASG)
+   - **Database Subnet 1 (`us-east-1a`):** `10.0.64.0/24` (RDS Primary)
+   - **Database Subnet 2 (`us-east-1b`):** `10.0.96.0/24` (RDS Multi-AZ Standby)
+3. **Database Selection:** PostgreSQL 15.7 with configurable `multi_az` (`false` in Dev/UAT for Free Tier cost efficiency; `true` in Prod for automated synchronous failover across AZs).
+4. **Dynamic AMI & Hardening:** Dynamic lookup using `data "aws_ami" "amazon_linux_2023"`. Enforce IMDSv2 (`http_tokens = "required"`). Zero open SSH ports — instances utilize AWS Systems Manager (SSM) Session Manager via IAM instance profiles.
+5. **Remote Backend & Concurrency:** S3 Bucket (AES256 encrypted, versioned, public access blocked) and DynamoDB state lock table in `global/s3_backend`.
+6. **Multi-Environment Architecture:** Independent directories for `envs/dev`, `envs/uat`, and `envs/prod` with isolated `.tfstate` paths in S3, environment-specific variables, and `.tfvars.example` files.
+7. **Hygiene & Bug Fixes:** Standardize AWS Provider version `aws ~> 5.0`, configure `.gitignore` (ignoring `.tfvars`, `.terraform/`, `*.tfstate`), and set up `.tflint.hcl`.
 
 ---
 
@@ -25,46 +34,49 @@ This specification defines the architectural overhaul and standardization of the
 
 ```text
 ========================================================================================================
-                                     AWS REGION (e.g., us-east-1)
+                                 AWS REGION: us-east-1 (VPC 10.0.0.0/16)
 ========================================================================================================
                                                   |
                                        [ Internet Gateway (IGW) ]
                                                   |
   +-----------------------------------------------+-----------------------------------------------+
-  |                                     VPC (10.0.0.0/16)                                         |
   |                                                                                               |
   |   +-----------------------------------------------+   +-----------------------------------+   |
   |   |              AVAILABILITY ZONE A              |   |        AVAILABILITY ZONE B        |   |
   |   |                                               |   |                                   |   |
   |   |  +-----------------------------------------+  |   |  +-----------------------------+  |   |
-  |   |  | Public Subnet A (10.0.1.0/24)           |  |   |  | Public Subnet B (10.0.2.0/24|  |   |
-  |   |  | - Internet-facing ALB (Node A)          |  |   |  | - Internet-facing ALB (Node B)| |  |
-  |   |  | - NAT Gateway                           |  |   |  |                             |  |   |
+  |   |  | Public Subnet 1 (10.0.1.0/24)           |  |   |  | Public Subnet 2 (10.0.16.0/24|  |   |
+  |   |  | - ALB Node A                            |  |   |  | - ALB Node B                |  |   |
+  |   |  | - Frontend ASG Web Server (Node A)      |  |   |  | - Frontend ASG Web Server B |  |   |
+  |   |  |                                         |  |   |  | - NAT Gateway & Elastic IP   |  |   |
   |   |  +-----------------------------------------+  |   |  +-----------------------------+  |   |
   |   |                      |                        |   |                |                  |   |
+  |   |                      | (HTTP 8080)            |   | (HTTP 8080)    |                  |   |
   |   |                      v                        |   |                v                  |   |
   |   |  +-----------------------------------------+  |   |  +-----------------------------+  |   |
-  |   |  | App Private Subnet A (10.0.11.0/24)     |  |   |  | App Private Subnet B (12/24)|  |   |
-  |   |  | - Auto Scaling Group (EC2 Instances)    |  |   |  | - Auto Scaling Group (EC2)  |  |   |
-  |   |  | - SSM Session Manager Managed (No SSH)  |  |   |  | - SSM Session Manager (No SSH)| |  |
-  |   |  | - Outbound via NAT Gateway              |  |   |  | - Outbound via NAT Gateway  |  |   |
+  |   |  | Private App Subnet 1 (10.0.24.0/24)     |  |   |  | Private App Subnet 2 (48/24)|  |   |
+  |   |  | - Backend ASG App Server (Node A)       |  |   |  | - Backend ASG App Server B  |  |   |
+  |   |  | - SSM Managed (Zero SSH)                |  |   |  | - SSM Managed (Zero SSH)    |  |   |
+  |   |  | - Egress updates via NAT GW             |  |   |  | - Egress updates via NAT GW |  |   |
   |   |  +-----------------------------------------+  |   |  +-----------------------------+  |   |
   |   |                      |                        |   |                |                  |   |
+  |   |                      | (PostgreSQL 5432)      |   | (PostgreSQL)   |                  |   |
   |   |                      v                        |   |                v                  |   |
   |   |  +-----------------------------------------+  |   |  +-----------------------------+  |   |
-  |   |  | DB Private Subnet A (10.0.21.0/24)      |  |   |  | DB Private Subnet B (22/24) |  |   |
-  |   |  | - Primary RDS PostgreSQL 15.7           |  |   |  | - Standby RDS (Multi-AZ in  |  |   |
-  |   |  |   (Port 5432 from App SG only)          |  |   |  |   Prod only)                |  |   |
+  |   |  | DB Subnet 1 (10.0.64.0/24)              |  |   |  | DB Subnet 2 (10.0.96.0/24)  |  |   |
+  |   |  | - Primary RDS PostgreSQL 15.7           |  |   |  | - Standby RDS PostgreSQL    |  |   |
+  |   |  |                                         |==|==>|   (Multi-AZ Synchronous in Prod) |
   |   |  +-----------------------------------------+  |   |  +-----------------------------+  |   |
   |   +-----------------------------------------------+   +-----------------------------------+   |
   |                                                                                               |
   +-----------------------------------------------------------------------------------------------+
 
-TRAFFIC FLOW & SECURITY CHAIN:
-1. Public Internet ----> ALB Security Group (HTTP:80, HTTPS:443 from 0.0.0.0/0)
-2. ALB SG -------------> App EC2 Security Group (HTTP:80 strictly from ALB SG; NO port 22)
-3. App EC2 SG ---------> RDS Security Group (PostgreSQL:5432 strictly from App EC2 SG)
-4. Outbound Egress ----> Private Subnets to NAT Gateway (Package updates / SSM endpoints)
+SECURITY GROUP FIREWALL CHAIN:
+1. Public Internet ----> ALB Security Group (Ports 80/443 from 0.0.0.0/0)
+2. ALB SG -------------> Frontend EC2 SG (Port 80 strictly from ALB SG)
+3. Frontend EC2 SG ----> Backend EC2 SG (Port 8080 strictly from Frontend EC2 SG; Zero SSH)
+4. Backend EC2 SG -----> RDS Database SG (Port 5432 strictly from Backend EC2 SG)
+5. Outbound Egress ----> Private Subnets route to NAT Gateway in Public Subnet 2
 ```
 
 ---
@@ -74,59 +86,65 @@ TRAFFIC FLOW & SECURITY CHAIN:
 ### 3.1 Network Tier (`modules/network`)
 - **VPC:** `10.0.0.0/16`, DNS hostnames & support enabled.
 - **Subnets:**
-  - 2x Public (`10.0.1.0/24`, `10.0.2.0/24`) with `map_public_ip_on_launch = true`.
-  - 2x App Private (`10.0.11.0/24`, `10.0.12.0/24`) with `map_public_ip_on_launch = false`.
-  - 2x Database Private (`10.0.21.0/24`, `10.0.22.0/24`) with `map_public_ip_on_launch = false`.
-- **Gateways:** 1x Internet Gateway, 1x NAT Gateway (in Public Subnet 1) with dedicated Elastic IP.
-- **Routing:** Public Route Table targeting IGW; Private Route Table targeting NAT Gateway.
+  - `public_subnet_cidrs = ["10.0.1.0/24", "10.0.16.0/24"]`
+  - `app_private_subnet_cidrs = ["10.0.24.0/24", "10.0.48.0/24"]`
+  - `db_private_subnet_cidrs = ["10.0.64.0/24", "10.0.96.0/24"]`
+  - Availability Zones: `["us-east-1a", "us-east-1b"]`
+- **Gateways:**
+  - 1x Internet Gateway (`igw-${var.environment}`)
+  - 1x Elastic IP + NAT Gateway (`nat-gateway-${var.environment}`) placed in `public_subnets[1]` (`10.0.16.0/24`, matching architectural diagram)
+- **Route Tables:**
+  - Public Route Table: Routes `0.0.0.0/0` → IGW, associated with both public subnets.
+  - Private Route Table: Routes `0.0.0.0/0` → NAT Gateway, associated with both App Private and DB Private subnets.
 
 ### 3.2 Compute & Scaling Tier (`modules/compute`)
 - **Dynamic AMI:** `data "aws_ami" "amazon_linux_2023"` matching `al2023-ami-2023.*-x86_64` owned by Amazon.
 - **IAM Instance Profile:** Attached IAM Role with `arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore` for AWS Systems Manager Session Manager.
 - **Security Groups:**
   - `alb-sg`: Allows inbound ports 80/443 from `0.0.0.0/0`.
-  - `app-sg`: Allows inbound port 80 strictly from `alb-sg`. Egress all to `0.0.0.0/0`.
-- **Launch Template:**
-  - Instance Type: Parameterized (`t3.micro` in Dev/UAT, `t3.small` in Prod).
-  - IMDSv2 Enforced: `http_tokens = "required"`, `http_put_response_hop_limit = 1`.
-  - Network Interfaces: Private subnet placement, `associate_public_ip_address = false`.
-  - User Data: Bootstraps Apache (`httpd`) and serves a dynamic webpage displaying hostname and Availability Zone retrieved securely via IMDSv2 tokens.
+  - `frontend-sg`: Allows inbound port 80 strictly from `alb-sg`. Egress to backend SG on port 8080 and to internet for OS updates.
+  - `backend-sg`: Allows inbound port 8080 strictly from `frontend-sg`. Egress to DB SG on port 5432 and to NAT GW for OS updates/SSM.
 - **Application Load Balancer:**
-  - Internet-facing, deployed across public subnets.
-  - HTTP Listener on port 80 forwarding to the target group.
-  - Target Group with HTTP health checks (`/`, matcher `200`, interval 30s).
-- **Auto Scaling Group:**
-  - Deployed across App Private Subnets.
-  - Target Group attachment with `ELB` health checks and 300s grace period.
-  - Lifecycle hook `create_before_destroy = true`.
+  - Public-facing, spans both public subnets.
+  - Target Group (`frontend-tg-${var.environment}`): Target type `instance`, port 80, health check path `/`.
+  - HTTP Listener on port 80 forwarding to the frontend target group.
+- **Frontend Auto Scaling Group & Launch Template:**
+  - Instance Type: Parameterized (`t3.micro` in Dev/UAT, `t3.small` in Prod).
+  - IMDSv2 Enforced (`http_tokens = "required"`).
+  - User Data: Configures web server displaying instance metadata (Hostname, AZ) and proxying API calls to backend.
+  - ASG Target Group Attachment to ALB Target Group.
+- **Backend Auto Scaling Group & Launch Template:**
+  - Deployed across App Private Subnets (`10.0.24.0/24`, `10.0.48.0/24`).
+  - Instance Type: Parameterized.
+  - IMDSv2 Enforced.
+  - User Data: Bootstraps application service listening on port 8080 connected to PostgreSQL.
+  - Capacities parameterized per environment (Dev/UAT: min 1, desired 2, max 3; Prod: min 2, desired 4, max 6).
 
 ### 3.3 Database Tier (`modules/database`)
-- **Engine:** RDS PostgreSQL `15.7`.
-- **Subnet Group:** Spans both Database Private Subnets across 2 AZs.
-- **Access & Exposure:** `publicly_accessible = false`. Ingress port 5432 restricted to `app-sg`.
+- **Engine:** Amazon RDS PostgreSQL `15.7`.
+- **Subnet Group:** Spans DB Subnet 1 (`10.0.64.0/24`) and DB Subnet 2 (`10.0.96.0/24`).
+- **Access & Exposure:** `publicly_accessible = false`. Ingress port 5432 restricted to `backend-sg`.
 - **High Availability:** Parameterized `multi_az`:
   - `dev`: `false`
   - `uat`: `false`
   - `prod`: `true`
-- **Storage:** gp3, 20GB (Dev/UAT), 50GB (Prod).
+- **Storage:** gp3, 20GB (Dev/UAT), 50GB (Prod) with storage autoscaling enabled.
 - **Backup & Retention:** 1 day (Dev/UAT), 7 days (Prod).
 
 ### 3.4 Remote Backend (`global/s3_backend`)
-- **S3 Bucket:** `three-tier-tf-state-<unique-suffix>` with versioning enabled, AES-256 encryption, public access block, and `force_destroy = true`.
+- **S3 Bucket:** `three-tier-tf-state-<account-id-or-unique-suffix>` with versioning enabled, AES-256 encryption, public access block, and `force_destroy = true`.
 - **DynamoDB Table:** `three-tier-tf-locks` with partition key `LockID` (S) and `PAY_PER_REQUEST` billing mode.
 
 ### 3.5 Environments (`envs/dev`, `envs/uat`, `envs/prod`)
-Each environment operates independently with its own:
-- `main.tf`: Declares provider, backend configuration (`key = "<env>/terraform.tfstate"`), and invokes `network`, `compute`, and `database` modules.
-- `variables.tf`: Parameter declarations.
-- `outputs.tf`: Exports VPC ID, ALB DNS Name, and RDS Endpoint.
-- `terraform.tfvars.example`: Reference configuration with dummy secrets.
-- `.gitignore`: Excludes active `.tfvars` and local state files.
+- Dedicated root configurations for each environment.
+- Backend configuration pointing to `key = "<env>/terraform.tfstate"`.
+- `terraform.tfvars.example` with non-sensitive placeholder configurations.
+- `.gitignore` preventing commit of `.tfstate` files, `.terraform/` cache, and real `.tfvars`.
 
 ---
 
 ## 4. Verification & Testing Strategy
 
-1. **Syntax & Lint Validation:** Run `terraform fmt -check` and `terraform validate` across `global/s3_backend` and all `envs/` directories.
+1. **Syntax & Lint Validation:** `terraform fmt -check` and `terraform validate` across `global/s3_backend` and all `envs/` directories.
 2. **Execution Plan Validation:** Verify clean plan generation with `terraform plan` to confirm dependency resolution and module parameter passing.
 3. **Security Audit:** Confirm absence of open port 22 (SSH), verify IMDSv2 requirement, and ensure RDS has zero public ingress.
