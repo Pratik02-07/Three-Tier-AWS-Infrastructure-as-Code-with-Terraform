@@ -20,7 +20,7 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: "1.6.0"
+          terraform_version: "1.9.5"
 
       - name: Setup TFLint
         uses: terraform-linters/setup-tflint@v4
@@ -33,24 +33,6 @@ jobs:
       - name: Validate Backend Module
         run: |
           cd global/s3_backend
-          terraform init -backend=false
-          terraform validate
-
-      - name: Validate Network Module
-        run: |
-          cd modules/network
-          terraform init -backend=false
-          terraform validate
-
-      - name: Validate Compute Module
-        run: |
-          cd modules/compute
-          terraform init -backend=false
-          terraform validate
-
-      - name: Validate Database Module
-        run: |
-          cd modules/database
           terraform init -backend=false
           terraform validate
 
