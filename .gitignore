@@ -23,3 +23,4 @@ terraform.rc
 
 # Whitelist safe example variable templates
 !*.tfvars.example
+docs/superpowers

@@ -14,6 +14,21 @@ A production-ready, highly available, and secure three-tier cloud architecture p
 
 ![3-Tier Architecture Diagram](docs/images/image.png)
 
+### Application Load Balancer
+
+The public-facing Application Load Balancer receives HTTP/HTTPS traffic and
+routes requests to the frontend tier. The frontend and backend security groups
+remain private to their respective tiers.
+
+![Application Load Balancer](docs/images/ALB.png)
+
+### Remote Backend and State Locking
+
+Terraform state is stored remotely in an encrypted S3 bucket. DynamoDB
+provides distributed state locking so concurrent changes to an environment are
+serialized and protected from state corruption.
+
+![Remote Terraform Backend](docs/images/remote-be.png)
 
 ---
 
@@ -62,6 +77,99 @@ A production-ready, highly available, and secure three-tier cloud architecture p
 
 ## 🚀 Quick Start Guide
 
+### CI Validation Workflow
+
+The `Terraform CI` workflow performs `terraform fmt -check`, initializes each
+selected environment against its S3 backend, selects or creates the required
+Terraform workspace, and runs `terraform validate`. It never runs
+`terraform plan` or `terraform apply`.
+
+Configure the repository secrets `AWS_ACCESS_KEY_ID` and
+`AWS_SECRET_ACCESS_KEY` before enabling CI validation.
+
+| Branch | Environments validated | Workspace |
+| :--- | :--- | :--- |
+| `main` | `envs/dev`, `envs/uat`, `envs/prod` | `default` |
+| `dev` | `envs/dev` | `dev` |
+| `uat` | `envs/uat` | `uat` |
+| `prod` | `envs/prod` | `prod` |
+
+### Branch and Workspace Management
+
+Each environment has its own Git branch, Terraform configuration directory,
+S3 state key, and Terraform workspace:
+
+| Git branch | Terraform directory | S3 state key | Terraform workspace |
+| :--- | :--- | :--- | :--- |
+| `main` | `envs/dev`, `envs/uat`, `envs/prod` | `dev/`, `uat/`, and `prod/` state keys | `default` |
+| `dev` | `envs/dev` | `dev/terraform.tfstate` | `dev` |
+| `uat` | `envs/uat` | `uat/terraform.tfstate` | `uat` |
+| `prod` | `envs/prod` | `prod/terraform.tfstate` | `prod` |
+
+The branch-to-workspace flow is illustrated below:
+
+![Terraform branch-to-workspace workflow](docs/images/Terraform%20Branch-to-Workspace%20Workflow.png)
+
+#### Initial setup
+
+Run these steps after provisioning the S3 bucket and DynamoDB lock table:
+
+```powershell
+# Create and publish the environment branches
+git switch -c dev
+git push -u origin dev
+
+git switch main
+git switch -c uat
+git push -u origin uat
+
+git switch main
+git switch -c prod
+git push -u origin prod
+
+# Return to the protected integration branch
+git switch main
+```
+
+Create the matching remote Terraform workspaces. The `default` workspace is
+used by `main`; the environment branches use their named workspace:
+
+```powershell
+foreach ($environment in @("dev", "uat", "prod")) {
+  Set-Location "envs\$environment"
+  terraform init -reconfigure
+  terraform workspace select $environment 2>$null
+  if ($LASTEXITCODE -ne 0) {
+    terraform workspace new $environment
+  }
+  Set-Location ..\..
+}
+```
+
+To inspect the active workspace or switch workspaces manually:
+
+```powershell
+terraform workspace show
+terraform workspace list
+terraform workspace select dev
+```
+
+#### Normal workflow
+
+1. Create a feature branch from the environment branch you intend to change.
+2. Make and review the Terraform change.
+3. Merge the change into `dev`, `uat`, or `prod`, or push directly to the
+   environment branch according to your repository protection rules.
+4. GitHub Actions initializes the S3 backend, selects the matching workspace,
+   and runs formatting and validation checks for that branch.
+5. Promote approved changes to `main` when appropriate.
+6. The `main` workflow validates all three environments with their
+   `default` workspaces.
+
+CI requires the repository secrets `AWS_ACCESS_KEY_ID` and
+`AWS_SECRET_ACCESS_KEY`. The validation workflow does not run
+`terraform plan` or `terraform apply`.
+
 ### 1. Provision Remote State Backend (Run Once)
 ```powershell
 cd global/s3_backend
@@ -91,8 +199,6 @@ terraform apply
 | **ALB** | 750 hrs/month (new accts) | Free Tier eligible | ~$16.20 / month | Standard AWS ALB pricing |
 | **NAT Gateway** ⚠️ | None | ~$32.40 / month | ~$32.40 / month | Charged hourly ($0.045/hr) |
 
-> [!WARNING]
-> **Cost Alert:** AWS NAT Gateway incurs an hourly charge even with zero traffic. Remember to run `terraform destroy` when done experimenting.
 
 ---
 

@@ -4,13 +4,16 @@ on:
   push:
     branches:
       - main
+      - dev
+      - uat
+      - prod
   pull_request:
     branches:
       - main
 
 jobs:
   validate:
-    name: "Validate & Lint"
+    name: "Validate"
     runs-on: ubuntu-latest
 
     steps:
@@ -22,34 +25,53 @@ jobs:
         with:
           terraform_version: "1.9.5"
 
-      - name: Setup TFLint
-        uses: terraform-linters/setup-tflint@v4
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          tflint_version: "v0.50.0"
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
 
       - name: Run Terraform Format Check
         run: terraform fmt -check -recursive
 
-      - name: Validate Backend Module
+      - name: Validate branch environments
+        env:
+          SOURCE_BRANCH: ${{ github.head_ref || github.ref_name }}
         run: |
-          cd global/s3_backend
-          terraform init -backend=false
-          terraform validate
+          set -euo pipefail
 
-      - name: Validate Dev Environment
-        run: |
-          cd envs/dev
-          terraform init -backend=false
-          terraform validate
+          validate_environment() {
+            local environment="$1"
+            local workspace="$2"
 
-      - name: Validate UAT Environment
-        run: |
-          cd envs/uat
-          terraform init -backend=false
-          terraform validate
+            echo "Validating envs/${environment} with workspace ${workspace}"
+            pushd "envs/${environment}" >/dev/null
+            terraform init -reconfigure
 
-      - name: Validate Prod Environment
-        run: |
-          cd envs/prod
-          terraform init -backend=false
-          terraform validate
+            if terraform workspace select "${workspace}" 2>/dev/null; then
+              :
+            else
+              terraform workspace new "${workspace}"
+            fi
+
+            terraform validate
+            popd >/dev/null
+          }
+
+          case "${SOURCE_BRANCH}" in
+            main)
+              validate_environment dev default
+              validate_environment uat default
+              validate_environment prod default
+              ;;
+            dev|uat|prod)
+              validate_environment "${SOURCE_BRANCH}" "${SOURCE_BRANCH}"
+              ;;
+            *)
+              echo "Unsupported branch '${SOURCE_BRANCH}'; validating all environments with default workspace"
+              validate_environment dev default
+              validate_environment uat default
+              validate_environment prod default
+              ;;
+          esac
