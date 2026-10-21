@@ -1,0 +1,16 @@
+aws_region                = "us-east-1"
+environment               = "uat"
+frontend_instance_type    = "t3.micro"
+backend_instance_type     = "t3.micro"
+frontend_min_size         = 1
+frontend_max_size         = 3
+frontend_desired_capacity = 2
+backend_min_size          = 1
+backend_max_size          = 3
+backend_desired_capacity  = 2
+db_instance_class         = "db.t3.micro"
+db_allocated_storage      = 20
+db_name                   = "uatdb"
+db_username               = "uatadmin"
+db_password               = "UatSecretPassword123!"
+db_multi_az               = false
