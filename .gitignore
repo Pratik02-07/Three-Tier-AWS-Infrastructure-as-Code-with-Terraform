@@ -1,0 +1,25 @@
+# Local .terraform directories
+**/.terraform/*
+
+# .tfstate files (managed remotely in S3)
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+
+# Sensitive variable files (passwords & tokens)
+*.tfvars
+*.tfvars.json
+
+# Override files
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# CLI configuration files
+.terraformrc
+terraform.rc
+
+# Whitelist safe example variable templates
+!*.tfvars.example
