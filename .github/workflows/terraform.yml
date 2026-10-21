@@ -1,0 +1,73 @@
+name: "Terraform CI"
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  validate:
+    name: "Validate & Lint"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.6.0"
+
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: "v0.50.0"
+
+      - name: Run Terraform Format Check
+        run: terraform fmt -check -recursive
+
+      - name: Validate Backend Module
+        run: |
+          cd global/s3_backend
+          terraform init -backend=false
+          terraform validate
+
+      - name: Validate Network Module
+        run: |
+          cd modules/network
+          terraform init -backend=false
+          terraform validate
+
+      - name: Validate Compute Module
+        run: |
+          cd modules/compute
+          terraform init -backend=false
+          terraform validate
+
+      - name: Validate Database Module
+        run: |
+          cd modules/database
+          terraform init -backend=false
+          terraform validate
+
+      - name: Validate Dev Environment
+        run: |
+          cd envs/dev
+          terraform init -backend=false
+          terraform validate
+
+      - name: Validate UAT Environment
+        run: |
+          cd envs/uat
+          terraform init -backend=false
+          terraform validate
+
+      - name: Validate Prod Environment
+        run: |
+          cd envs/prod
+          terraform init -backend=false
+          terraform validate

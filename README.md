@@ -1,5 +1,11 @@
 # Three-Tier AWS Infrastructure as Code with Terraform
 
+[![Terraform CI](https://github.com/Pratik02-07/Three-Tier-AWS-Infrastructure-as-Code-with-Terraform/actions/workflows/terraform.yml/badge.svg)](https://github.com/Pratik02-07/Three-Tier-AWS-Infrastructure-as-Code-with-Terraform/actions/workflows/terraform.yml)
+[![Terraform](https://img.shields.io/badge/Terraform-1.6+-844FBA?style=for-the-badge&logo=terraform&logoColor=white)](https://www.terraform.io/)
+[![AWS](https://img.shields.io/badge/AWS-EC2_Multi--OS-FF9900?style=for-the-badge&logo=amazon-aws&logoColor=white)](https://aws.amazon.com/)
+[![Linux](https://img.shields.io/badge/Linux-Ubuntu_|_RHEL_|_Amazon_Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black)](https://ubuntu.com/)
+
+
 A production-ready, highly available, and secure three-tier cloud architecture provisioned on AWS using **Terraform** and the official **AWS Provider**.
 
 ---
