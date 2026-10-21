@@ -156,15 +156,133 @@ terraform workspace select dev
 
 #### Normal workflow
 
-1. Create a feature branch from the environment branch you intend to change.
-2. Make and review the Terraform change.
-3. Merge the change into `dev`, `uat`, or `prod`, or push directly to the
-   environment branch according to your repository protection rules.
-4. GitHub Actions initializes the S3 backend, selects the matching workspace,
-   and runs formatting and validation checks for that branch.
-5. Promote approved changes to `main` when appropriate.
-6. The `main` workflow validates all three environments with their
-   `default` workspaces.
+Use the branch that matches the environment you want to change:
+
+| Change target | Git branch | Directory to edit | Workspace used by CI |
+| :--- | :--- | :--- | :--- |
+| Development | `dev` | `envs/dev` | `dev` |
+| UAT/testing | `uat` | `envs/uat` | `uat` |
+| Production | `prod` | `envs/prod` | `prod` |
+| All environments or shared code | feature branch, then promote | `modules/` or the relevant `envs/` directory | Depends on the target branch |
+
+For example, to change Development:
+
+```powershell
+git switch dev
+git pull
+Set-Location envs\dev
+terraform workspace select dev
+```
+
+Edit the Terraform files, then run:
+
+```powershell
+terraform fmt -recursive
+terraform validate
+git add .
+git commit -m "change dev configuration"
+git push origin dev
+```
+
+For UAT or Production, use the equivalent branch, directory, and workspace:
+
+```text
+uat  → envs/uat  → workspace uat
+prod → envs/prod → workspace prod
+```
+
+Do not use `main` for normal environment-specific changes. `main` is the
+integration branch: CI validates all three environment directories using each
+directory's `default` workspace:
+
+```text
+main → envs/dev  → default
+main → envs/uat  → default
+main → envs/prod → default
+```
+
+#### Shared module changes
+
+The `dev`, `uat`, and `prod` branches contain the complete repository, so each
+branch includes all three `envs/` directories and the shared `modules/`
+directory. This is expected Git behavior; the branch-to-environment mapping is
+controlled by CI, not by deleting folders from branches.
+
+For changes to shared modules such as `modules/network`, `modules/compute`, or
+`modules/database`:
+
+1. Start from the environment where the change will be tested:
+
+   ```powershell
+   git switch dev
+   git pull
+   git switch -c feature/update-network
+   ```
+
+2. Edit the shared module and test it through `dev`.
+3. Open or merge the reviewed change into `dev`.
+4. Promote the same approved change to `uat`.
+5. Promote it to `prod`.
+6. Merge the approved change to `main` when the release is complete.
+
+Each environment branch still validates only its matching environment:
+
+```text
+dev  branch → envs/dev  → workspace dev
+uat  branch → envs/uat  → workspace uat
+prod branch → envs/prod → workspace prod
+```
+
+#### Branches, variables, state, and workspaces
+
+Branches contain source code; workspaces contain Terraform state. A workspace
+does not contain variables, and a Git branch does not automatically change
+Terraform variables. The environment directory supplies the variable defaults:
+
+| Directory | Environment variable | Typical sizing | State key |
+| :--- | :--- | :--- | :--- |
+| `envs/dev` | `dev` | `t3.micro`, smaller capacity | `dev/terraform.tfstate` |
+| `envs/uat` | `uat` | `t3.micro`, smaller capacity | `uat/terraform.tfstate` |
+| `envs/prod` | `prod` | `t3.small`, larger capacity and Multi-AZ database | `prod/terraform.tfstate` |
+
+The complete workspace layout is scoped by directory:
+
+```text
+global/s3_backend → default
+
+envs/dev  → default, dev
+envs/uat  → default, uat
+envs/prod → default, prod
+```
+
+This is six workspace instances across three separate environment
+configurations. It does not mean that one branch uses six workspaces:
+
+```text
+dev  branch → envs/dev  → dev
+uat  branch → envs/uat  → uat
+prod branch → envs/prod → prod
+main        → envs/dev  → default
+main        → envs/uat  → default
+main        → envs/prod → default
+```
+
+Terraform workspaces are scoped to the directory/backend configuration where
+they are listed. Running `terraform workspace list` in
+`global/s3_backend` shows only that configuration's `default` workspace; it
+does not list the workspaces under `envs/dev`, `envs/uat`, or `envs/prod`.
+
+To inspect or switch a workspace, first enter the relevant environment:
+
+```powershell
+Set-Location envs\dev
+terraform workspace show
+terraform workspace list
+terraform workspace select dev
+```
+
+The S3 bucket and DynamoDB lock table must exist before initializing an
+environment with its remote backend or managing its remote workspaces.
 
 CI requires the repository secrets `AWS_ACCESS_KEY_ID` and
 `AWS_SECRET_ACCESS_KEY`. The validation workflow does not run
