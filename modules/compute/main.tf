@@ -219,20 +219,7 @@ resource "aws_launch_template" "frontend" {
     http_put_response_hop_limit = 1
   }
 
-  user_data = base64encode(<<-EOF
-              #!/bin/bash
-              dnf update -y
-              dnf install -y httpd
-              systemctl start httpd
-              systemctl enable httpd
-              TOKEN=`curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600"`
-              AZ=`curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/availability-zone`
-              echo "<body style='font-family: Arial; text-align: center; margin-top: 80px;'>" > /var/www/html/index.html
-              echo "<h1>3-Tier AWS Architecture: Frontend Web Server</h1>" >> /var/www/html/index.html
-              echo "<h3>Environment: ${var.environment} | Hostname: $(hostname) | AZ: $AZ</h3>" >> /var/www/html/index.html
-              echo "</body>" >> /var/www/html/index.html
-              EOF
-  )
+  user_data = base64encode(templatefile("${path.module}/user_data.sh", { environment = var.environment }))
 
   tag_specifications {
     resource_type = "instance"
@@ -293,27 +280,7 @@ resource "aws_launch_template" "backend" {
     http_put_response_hop_limit = 1
   }
 
-  user_data = base64encode(<<-EOF
-              #!/bin/bash
-              dnf update -y
-              dnf install -y python3
-              cat << 'PYEOF' > /home/ec2-user/server.py
-              from http.server import HTTPServer, BaseHTTPRequestHandler
-              import urllib.request
-
-              class SimpleHandler(BaseHTTPRequestHandler):
-                  def do_GET(self):
-                      self.send_response(200)
-                      self.send_header('Content-type', 'application/json')
-                      self.end_headers()
-                      self.wfile.write(b'{"status": "ok", "tier": "backend-app", "environment": "${var.environment}"}')
-
-              server = HTTPServer(('0.0.0.0', 8080), SimpleHandler)
-              server.serve_forever()
-              PYEOF
-              nohup python3 /home/ec2-user/server.py > /var/log/backend-server.log 2>&1 &
-              EOF
-  )
+  user_data = base64encode(templatefile("${path.module}/user_data.sh", { environment = var.environment }))
 
   tag_specifications {
     resource_type = "instance"
